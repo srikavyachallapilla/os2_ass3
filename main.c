@@ -2,169 +2,114 @@
 #include <stdlib.h>
 #include <string.h>
 
-#define MAX_FRAMES 100
-#define MAX_INPUT_SIZE 1000
+#define MAX_FRAMES 1000
 
-int main(int argc, char *argv[]) {
-    // Check if correct number of arguments provided
-    if (argc != 4) {
-        printf("Usage: %s <filename> <algorithm type> <number of frames>\n", argv[0]);
-        exit(1);
-    }
+int frames[MAX_FRAMES];
 
-    // Open the input file
-    FILE *input_file = fopen(argv[1], "r");
-
-    // Check if input file was opened successfully
-    if (input_file == NULL) {
-        printf("Error: Unable to open input file.\n");
-        exit(1);
-    }
-
-    // Parse input arguments
-    int algorithm_type = atoi(argv[2]);
-    int num_frames = atoi(argv[3]);
-
-    // Create arrays for the page table, frame table, and reference bit table
-    int page_table[MAX_FRAMES];
-    int frame_table[MAX_FRAMES];
-    int reference_bit_table[MAX_FRAMES];
-
-    // Initialize all arrays to zero
-    memset(page_table, 0, sizeof(page_table));
-    memset(frame_table, 0, sizeof(frame_table));
-    memset(reference_bit_table, 0, sizeof(reference_bit_table));
-
-    // Initialize variables for tracking disk reads and writes
-    int num_reads = 0;
-    int num_writes = 0;
-
-    // Initialize variables for parsing input file
-    char input[MAX_INPUT_SIZE];
-    char *token;
-    int virtual_address, operation_type;
-
-    // Initialize variables for implementing FIFO algorithm
-    int fifo_queue[MAX_FRAMES];
-    int queue_front = 0;
-    int queue_back = 0;
-
-    // Initialize variables for implementing LRU algorithm
-    int lru_timestamp[MAX_FRAMES];
-    int timestamp_counter = 0;
-
-    // Loop through input file
-    while (fgets(input, MAX_INPUT_SIZE, input_file) != NULL) {
-        // Parse virtual address and operation type from input line
-        token = strtok(input, " ");
-        virtual_address = atoi(token);
-        token = strtok(NULL, " ");
-        operation_type = atoi(token);
-
-        // Check if page is already in memory
-        int page_found = 0;
-        int page_index;
-        for (int i = 0; i < num_frames; i++) {
-            if (page_table[i] == virtual_address) {
-                page_found = 1;
-                page_index = i;
+int fifo(int* pages, int num_pages, int num_frames) {
+    int disk_reads = 0, disk_writes = 0;
+    int frame_index = 0;
+    int page_fault = 0;
+    for (int i = 0; i < num_pages; i++) {
+        int page = pages[i];
+        int found = 0;
+        for (int j = 0; j < num_frames; j++) {
+            if (frames[j] == page) {
+                found = 1;
                 break;
             }
         }
+        if (!found) {
+            page_fault++;
+            if (frame_index < num_frames) {
+                frames[frame_index++] = page;
+                disk_reads++;
+            } else {
+                frames[0] = page;
+                disk_reads++;
+                disk_writes++;
+            }
+        }
+    }
+    return disk_reads + disk_writes;
+}
 
-        // If page is not in memory, choose a page to evict using the selected algorithm
-        if (!page_found) {
-            // Increment disk reads counter
-            num_reads++;
-
-            // Find an empty frame if available
-            int empty_frame_index = -1;
-            for (int i = 0; i < num_frames; i++) {
-                if (frame_table[i] == 0) {
-                    empty_frame_index = i;
-                    break;
+int lru(int* pages, int num_pages, int num_frames) {
+    int disk_reads = 0, disk_writes = 0;
+    int page_fault = 0;
+    int* lru = (int*)malloc(num_frames * sizeof(int));
+    memset(lru, 0, num_frames * sizeof(int));
+    for (int i = 0; i < num_pages; i++) {
+        int page = pages[i];
+        int found = 0;
+        for (int j = 0; j < num_frames; j++) {
+            if (frames[j] == page) {
+                found = 1;
+                lru[j] = i;
+                break;
+            }
+        }
+        if (!found) {
+            page_fault++;
+            int min_lru = lru[0];
+            int min_lru_index = 0;
+            for (int j = 1; j < num_frames; j++) {
+                if (lru[j] < min_lru) {
+                    min_lru = lru[j];
+                    min_lru_index = j;
                 }
             }
-
-            // If no empty frames available, use selected algorithm to choose a page to evict
-            if (empty_frame_index == -1) {
-                int evicted_page_index = -1;
-                if (algorithm_type == 1) { // FIFO algorithm
-                    evicted_page_index = fifo_queue[queue_front];
-                    queue_front = (queue_front + 1) % num_frames;
-                } else if (algorithm_type == 2) { // LRU algorithm
-                    int oldest_timestamp = timestamp_counter;
-                    for (int i = 0; i < num_frames; i++) {
-                        if (lru_timestamp[i] < oldest_timestamp){
-                            oldest_timestamp = lru_timestamp[i];
-                            evicted_page_index = i;
-                        }
-                    }
-                  }
-                             // Increment disk writes counter
-            num_writes++;
-
-            // Remove evicted page from page table and frame table
-            int evicted_page = page_table[evicted_page_index];
-            page_table[evicted_page_index] = 0;
-            frame_table[evicted_page_index] = 0;
-
-            // If evicted page was dirty, write it back to disk
-            if (reference_bit_table[evicted_page_index] == 1) {
-                num_writes++;
-            }
-
-            // Add new page to page table and frame table
-            page_table[empty_frame_index] = virtual_address;
-            frame_table[empty_frame_index] = 1;
-            reference_bit_table[empty_frame_index] = operation_type;
-
-            // Update FIFO queue or LRU timestamp for new page
-            if (algorithm_type == 1) { // FIFO algorithm
-                fifo_queue[queue_back] = empty_frame_index;
-                queue_back = (queue_back + 1) % num_frames;
-            } else if (algorithm_type == 2) { // LRU algorithm
-                lru_timestamp[empty_frame_index] = ++timestamp_counter;
-            }
-        } else { // If an empty frame is available, add new page to page table and frame table
-            page_table[empty_frame_index] = virtual_address;
-            frame_table[empty_frame_index] = 1;
-            reference_bit_table[empty_frame_index] = operation_type;
-
-            // Update FIFO queue or LRU timestamp for new page
-            if (algorithm_type == 1) { // FIFO algorithm
-                fifo_queue[queue_back] = empty_frame_index;
-                queue_back = (queue_back + 1) % num_frames;
-            } else if (algorithm_type == 2) { // LRU algorithm
-                lru_timestamp[empty_frame_index] = ++timestamp_counter;
-            }
-        }
-    } else { // If page is already in memory, update its reference bit and LRU timestamp (if using LRU algorithm)
-        reference_bit_table[page_index] = operation_type;
-        if (algorithm_type == 2) { // LRU algorithm
-            lru_timestamp[page_index] = ++timestamp_counter;
+            frames[min_lru_index] = page;
+            lru[min_lru_index] = i;
+            disk_reads++;
+            disk_writes++;
         }
     }
+    free(lru);
+    return disk_reads + disk_writes;
 }
 
-// Print number of disk reads and writes
-printf("Disk Reads: %d\n", num_reads);
-printf("Disk Writes: %d\n", num_writes);
-
-// Print contents of frames at the end of the simulation
-printf("Frame Contents: ");
-for (int i = 0; i < num_frames; i++) {
-    if (frame_table[i] == 1) {
-        printf("%d ", page_table[i]);
+int main(int argc, char** argv) {
+    if (argc != 4) {
+        printf("Usage: %s <file name> <algorithm type (0 for FIFO, 1 for LRU)> <number of frames>\n", argv[0]);
+        return 1;
+    }
+    char* file_name = argv[1];
+    int algorithm_type = atoi(argv[2]);
+    int num_frames = atoi(argv[3]);
+    FILE* file = fopen(file_name, "r");
+    if (file == NULL) {
+        printf("Unable to open file %s\n", file_name);
+        return 1;
+    }
+    int num_pages = 0;
+    int* pages = (int*)malloc(MAX_FRAMES * sizeof(int));
+    int page, operation;
+    while (fscanf(file, "%d %d", &page, &operation) != EOF) {
+        pages[num_pages++] = page;
+    }
+    fclose(file);
+    int disk_io;
+    if (algorithm_type == 0) {
+        disk_io = fifo(pages, num_pages, num_frames);
+    } else if (algorithm_type == 1) {
+        disk_io = lru(pages, num_pages, num_frames);
     } else {
-        printf("Empty ");
+        printf("Invalid algorithm type. Must be 0 (FIFO) or 1 (LRU)\n");
+        return 1;
     }
+    printf("Disk Reads: %d\n", disk_io);
+    printf("Disk Writes: %d\n", disk_io);
+    printf("Frames: ");
+    for (int i = 0; i < num_frames; i++) {
+        if (frames[i] == 0) {
+            printf("_ ");
+        } else {
+            printf("%d ", frames[i]);
+        }
+    }
+    printf("\n");
+    free(pages);
+    return 0;
 }
-printf("\n");
-
-// Close input file
-fclose(input_file);
-
-return 0;
- 
-                  
+   
